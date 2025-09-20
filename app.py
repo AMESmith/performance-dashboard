@@ -23,8 +23,8 @@ st.markdown("""
         color: #000000;
     }
     .card {
-        background-color: #000000;
-        border: 2px solid #ffb000;
+        background-color: #ffb000;
+        border: 2px solid #000000;
         border-radius: 10px;
         padding: 15px;
         text-align: center;
@@ -32,7 +32,7 @@ st.markdown("""
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
     .card h3 {
-        color: #000000;
+        color: #ffb000;
         font-size: 16px;
         margin-bottom: 5px;
     }
