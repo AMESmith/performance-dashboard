@@ -313,11 +313,19 @@ if current_q != "+ Add new quarter":
         with qc: st.markdown(f"<div class='card'><h3>Travel Impact</h3><p>{row['Travel Impact Score']:.1f}</p></div>", unsafe_allow_html=True)
         with qd: st.markdown(f"<div class='card'><h3>Deleg/AUTO/DIRECT</h3><p>{row['% Delegated']:.0f}%/{row['% Automated']:.0f}%/{row['% Direct']:.0f}%</p></div>", unsafe_allow_html=True)
 
-    # Quarterly summary
+     # Quarterly summary
     years_present = sorted(set(q["Quarter"].astype(str).str.slice(0,4)))
     sel_year = st.selectbox("Summary year", years_present, index=len(years_present)-1 if years_present else 0)
     if sel_year:
         qs = quarterly_summary(st.session_state.quarterly, sel_year)
-        st.markdown(f"**{sel_year
+        st.markdown(f"**{sel_year} Quarterly Summary (Q1–Q4 + YTD)**")
+        st.dataframe(qs, use_container_width=True)
 
+st.divider()
 
+# ---------------------- Risk Indicators ----------------------
+st.markdown("### Risk Indicators")
+st.dataframe(
+    risk_table_all(st.session_state.scenarios, st.session_state.execs_supported),
+    use_container_width=True
+)
