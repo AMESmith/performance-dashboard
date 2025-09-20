@@ -15,7 +15,6 @@ TITLE = "Executive Assistant Performance Dashboard"
 # ---------------------- EA Insights Styling ----------------------
 st.markdown("""
     <style>
-    /* App base */
     .stApp {
         background-color: #FFFFFF;
         color: #000000;
@@ -23,9 +22,8 @@ st.markdown("""
     h1, h2, h3, h4 {
         color: #000000;
     }
-    /* Custom KPI card styling */
     .card {
-        background-color: #FFFFFF;
+        background-color: #000000;
         border: 2px solid #ffb000;
         border-radius: 10px;
         padding: 15px;
@@ -41,7 +39,7 @@ st.markdown("""
     .card p {
         font-size: 22px;
         font-weight: bold;
-        color: #ffb000;
+        color: #ffffff;
         margin: 0;
     }
     </style>
@@ -97,7 +95,6 @@ def compute_scores_for_scenario(df: pd.DataFrame, execs_supported: int) -> pd.Da
     out["LevelScore"] = out["Level"].map(LEVEL_SCORES).astype(float)
     out["VolFrac"] = (out["Volume %"].astype(float).clip(0, 100)) / 100.0
     out["WeightedScore"] = out["LevelScore"] * out["VolFrac"]
-    # Exec multiplier
     mask_exec = (out["Category"] == "Executive Support")
     out.loc[mask_exec, "WeightedScore"] = out.loc[mask_exec, "WeightedScore"] * max(1, int(execs_supported))
     return out
@@ -128,6 +125,35 @@ def risk_table_all(scenarios_dict, execs_supported_dict):
         })
     return pd.DataFrame(rows)
 
+def quarterly_enriched(df: pd.DataFrame) -> pd.DataFrame:
+    q = df.copy()
+    q["Email Efficiency"] = np.where(q["Emails Received"]>0, q["Emails Sent"]/q["Emails Received"], 0.0)
+    q["Invite Action Rate"] = np.where(q["Emails Received"]>0, q["Invites Actioned"]/q["Emails Received"], 0.0)
+    q["Travel Impact Score"] = q["Domestic Trips"] + q["International Trips"]*3.0
+    q["Delegation Total"] = q["Tasks Delegated"] + q["Tasks Automated"] + q["Tasks Directly Executed"]
+    q["% Delegated"] = np.where(q["Delegation Total"]>0, q["Tasks Delegated"]/q["Delegation Total"]*100.0, 0.0)
+    q["% Automated"] = np.where(q["Delegation Total"]>0, q["Tasks Automated"]/q["Delegation Total"]*100.0, 0.0)
+    q["% Direct"] = np.where(q["Delegation Total"]>0, q["Tasks Directly Executed"]/q["Delegation Total"]*100.0, 0.0)
+    return q
+
+def quarterly_summary(df: pd.DataFrame, year: str) -> pd.DataFrame:
+    metrics = ["Emails Received","Emails Sent","Invites Actioned",
+               "Meetings Scheduled","Domestic Trips","International Trips",
+               "Projects","Events","Expense Reports Processed","Approvals Routed"]
+    d = df[df["Quarter"].astype(str).str.startswith(f"{year}-Q")].copy()
+    rows = []
+    totals = {m:0 for m in metrics}
+    for qnum in [1,2,3,4]:
+        qlabel = f"{year}-Q{qnum}"
+        dq = d[d["Quarter"]==qlabel]
+        vals = {m:int(dq[m].sum()) if not dq.empty else 0 for m in metrics}
+        vals["Quarter"] = qlabel
+        rows.append(vals)
+        for m in metrics: totals[m]+=vals[m]
+    ytd = {"Quarter":"YTD"} | totals
+    rows.append(ytd)
+    return pd.DataFrame(rows, columns=["Quarter"]+metrics)
+
 # ---------------------- Sidebar ----------------------
 with st.sidebar:
     st.markdown("### Controls")
@@ -149,11 +175,9 @@ totals = scenario_totals(st.session_state.scenarios, st.session_state.execs_supp
 exp_total, tgt_total, act_total = totals["Executive Expectations"], totals["Targeted Performance"], totals["Actual Performance"]
 align_val = alignment_pct(act_total, exp_total)
 
-# Example satisfaction/savings placeholders
 sat_proj = 85.0
 sav_redund, sav_speed = 1000.0, 2000.0
 
-# Row 1
 cols = st.columns(5)
 with cols[0]:
     st.markdown(f"<div class='card'><h3>Expectation Total</h3><p>{exp_total:.2f}</p></div>", unsafe_allow_html=True)
@@ -166,7 +190,6 @@ with cols[3]:
 with cols[4]:
     st.markdown(f"<div class='card'><h3>Satisfaction</h3><p>{sat_proj:.1f}%</p></div>", unsafe_allow_html=True)
 
-# Row 2
 cols2 = st.columns(3)
 with cols2[0]:
     st.markdown(f"<div class='card'><h3>Executives Supported</h3><p>{st.session_state.execs_supported['Actual Performance']}</p></div>", unsafe_allow_html=True)
@@ -193,6 +216,72 @@ edited = st.data_editor(
     key=f"perf_editor_{selected_scenario}",
 )
 st.session_state.scenarios[selected_scenario] = edited
+
+st.divider()
+
+# ---------------------- Quarterly Workload Analytics ----------------------
+st.markdown("### Quarterly Workload Analytics")
+q = st.session_state.quarterly
+quarter_options = list(q["Quarter"].astype(str).unique())
+current_q = st.selectbox("Quarter to edit", options=quarter_options + ["+ Add new quarter"], index=len(quarter_options)-1 if quarter_options else 0)
+
+if current_q == "+ Add new quarter":
+    new_label = st.text_input("New quarter label (YYYY-Q#)", value=_default_quarter_label())
+    if st.button("➕ Confirm Add Quarter"):
+        if new_label and new_label not in q["Quarter"].values:
+            base = q.iloc[-1].copy()
+            base["Quarter"] = new_label
+            st.session_state.quarterly = pd.concat([q, pd.DataFrame([base])], ignore_index=True)
+        st.experimental_rerun()
+
+def edit_block(title, fields):
+    st.markdown(f"**{title}**")
+    cols = st.columns(2)
+    df = st.session_state.quarterly
+    idxs = df.index[df["Quarter"]==current_q]
+    if len(idxs)==0: return
+    idx = idxs[0]
+    for i, field in enumerate(fields):
+        with cols[i % 2]:
+            if "Hours" in field:
+                df.at[idx, field] = st.number_input(field, min_value=0.0, step=0.5, value=float(df.at[idx, field]))
+            else:
+                df.at[idx, field] = st.number_input(field, min_value=0, step=1, value=int(df.at[idx, field]))
+    st.session_state.quarterly = df
+
+if current_q != "+ Add new quarter":
+    with st.expander("Email", expanded=True):
+        edit_block("Email", ["Emails Received", "Emails Sent", "Invites Actioned"])
+    with st.expander("Meetings (Calendar Engineering)", expanded=True):
+        edit_block("Meetings", ["Meetings Scheduled", "Reschedules", "Meeting Notes Prepared"])
+    with st.expander("Travel", expanded=True):
+        edit_block("Travel", ["Domestic Trips", "International Trips"])
+    with st.expander("People Ops", expanded=False):
+        edit_block("People Ops", ["Onboardings Supported", "Trainings Facilitated"])
+    with st.expander("Finance", expanded=False):
+        edit_block("Finance", ["Expense Reports Processed", "Approvals Routed"])
+    with st.expander("Operational Support (Quarterly)", expanded=True):
+        edit_block("Operational Support", ["Projects", "Events"])
+    with st.expander("Automation / Delegation", expanded=True):
+        edit_block("Automation / Delegation", ["Tasks Delegated", "Tasks Automated", "Tasks Directly Executed"])
+    with st.expander("Work Pattern", expanded=False):
+        edit_block("Work Pattern", ["Reactive Work Hours", "Overtime Hours"])
+
+    q_enriched = quarterly_enriched(st.session_state.quarterly)
+    if current_q in q_enriched["Quarter"].values:
+        row = q_enriched[q_enriched["Quarter"]==current_q].iloc[0]
+        qa, qb, qc, qd = st.columns(4)
+        with qa: st.markdown(f"<div class='card'><h3>Email Efficiency</h3><p>{row['Email Efficiency']:.2f}</p></div>", unsafe_allow_html=True)
+        with qb: st.markdown(f"<div class='card'><h3>Invite Action Rate</h3><p>{row['Invite Action Rate']:.2f}</p></div>", unsafe_allow_html=True)
+        with qc: st.markdown(f"<div class='card'><h3>Travel Impact</h3><p>{row['Travel Impact Score']:.1f}</p></div>", unsafe_allow_html=True)
+        with qd: st.markdown(f"<div class='card'><h3>Deleg/AUTO/DIRECT</h3><p>{row['% Delegated']:.0f}%/{row['% Automated']:.0f}%/{row['% Direct']:.0f}%</p></div>", unsafe_allow_html=True)
+
+    years_present = sorted(set(q["Quarter"].astype(str).str.slice(0,4)))
+    sel_year = st.selectbox("Summary year", years_present, index=len(years_present)-1 if years_present else 0)
+    if sel_year:
+        qs = quarterly_summary(st.session_state.quarterly, sel_year)
+        st.markdown(f"**{sel_year} Quarterly Summary (Q1–Q4 + YTD)**")
+        st.dataframe(qs, use_container_width=True)
 
 st.divider()
 
