@@ -15,7 +15,6 @@ TITLE = "Executive Assistant Performance Dashboard"
 # ---------------------- EA Insights Styling ----------------------
 st.markdown("""
     <style>
-    /* Base */
     .stApp {
         background-color: #FFFFFF;
         color: #000000;
@@ -25,24 +24,24 @@ st.markdown("""
     }
     /* KPI Cards */
     .card {
-        background-color: #000000;
-        border: 2px solid #ffb000;
+        background-color: #000000;  /* black background */
+        border: 2px solid #ffb000;  /* EA Insights gold border */
         border-radius: 10px;
         padding: 15px;
         text-align: center;
         margin: 5px;
-        box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
+        box-shadow: 2px 2px 8px rgba(0,0,0,0.4);
     }
     .card h3 {
-        color: #ffffff;
-        font-size: 18px;     /* bigger, clearer titles */
-        font-weight: 600;    /* bold titles */
-        margin-bottom: 10px; /* spacing above number */
+        color: #FFFFFF;   /* white titles */
+        font-size: 18px;
+        font-weight: 600;
+        margin-bottom: 10px;
     }
     .card p {
-        font-size: 24px;     /* large numbers */
-        font-weight: 800;    /* extra bold numbers */
-        color: #ffb000;      /* EA Insights gold */
+        font-size: 24px;
+        font-weight: 800;
+        color: #ffb000;   /* gold numbers */
         margin: 0;
     }
     </style>
@@ -77,21 +76,13 @@ def init_state():
     if "quarterly" not in ss:
         ss.quarterly = pd.DataFrame([{
             "Quarter": _default_quarter_label(),
-            # Email
             "Emails Received": 0, "Emails Sent": 0, "Invites Actioned": 0,
-            # Calendar Engineering
             "Meetings Scheduled": 0, "Reschedules": 0, "Meeting Notes Prepared": 0,
-            # Travel
             "Domestic Trips": 0, "International Trips": 0,
-            # People Ops
             "Onboardings Supported": 0, "Trainings Facilitated": 0,
-            # Finance
             "Expense Reports Processed": 0, "Approvals Routed": 0,
-            # Operational Support (quarterly)
             "Projects": 0, "Events": 0,
-            # Automation / Delegation
             "Tasks Delegated": 0, "Tasks Automated": 0, "Tasks Directly Executed": 0,
-            # Work Pattern
             "Reactive Work Hours": 0.0, "Overtime Hours": 0.0,
         }])
     if "show_heatmap" not in ss: ss.show_heatmap = False
@@ -106,7 +97,6 @@ def compute_scores_for_scenario(df: pd.DataFrame, execs_supported: int) -> pd.Da
     out["LevelScore"] = out["Level"].map(LEVEL_SCORES).astype(float)
     out["VolFrac"] = (out["Volume %"].astype(float).clip(0, 100)) / 100.0
     out["WeightedScore"] = out["LevelScore"] * out["VolFrac"]
-    # Apply exec multiplier to Executive Support only
     mask_exec = (out["Category"] == "Executive Support")
     out.loc[mask_exec, "WeightedScore"] = out.loc[mask_exec, "WeightedScore"] * max(1, int(execs_supported))
     return out
@@ -126,7 +116,7 @@ def risk_table_all(scenarios_dict, execs_supported_dict):
     for cat in CATEGORIES:
         e = exp.loc[exp["Category"]==cat, "WeightedScore"].sum()
         t = tgt.loc[tgt["Category"]==cat, "WeightedScore"].sum()
-        a = act.loc[act]["WeightedScore"].sum() if False else act.loc[act["Category"]==cat, "WeightedScore"].sum()
+        a = act.loc[act["Category"]==cat, "WeightedScore"].sum()
         rows.append({
             "Category": cat,
             "Expectation": e,
@@ -166,6 +156,32 @@ def quarterly_summary(df: pd.DataFrame, year: str) -> pd.DataFrame:
     rows.append(ytd)
     return pd.DataFrame(rows, columns=["Quarter"]+metrics)
 
+# ---------------------- Exports ----------------------
+def export_to_excel(scenarios_dict, execs_supported_dict, quarterly_df, period):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        for scen, df in scenarios_dict.items():
+            compute_scores_for_scenario(df, execs_supported_dict.get(scen,1)).to_excel(writer, index=False, sheet_name=scen[:31])
+        quarterly_df.to_excel(writer, index=False, sheet_name="Quarterly Raw")
+    output.seek(0)
+    return output
+
+def export_to_pdf(scenarios_dict, execs_supported_dict, period, heatmap_img_bytes=None):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer)
+    styles = getSampleStyleSheet()
+    elements = []
+    totals = scenario_totals(scenarios_dict, execs_supported_dict)
+    elements.append(Paragraph(TITLE, styles["Title"]))
+    elements.append(Paragraph(f"Reporting Period: {period}", styles["Normal"]))
+    tbl = [["Scenario","Total Score"]]+[[k,f"{v:.2f}"] for k,v in totals.items()]
+    t = Table(tbl)
+    t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),0.5,colors.black)]))
+    elements.append(t)
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer
+
 # ---------------------- Sidebar ----------------------
 with st.sidebar:
     st.markdown("### Controls")
@@ -173,20 +189,22 @@ with st.sidebar:
     selected_scenario = st.selectbox("Scenario to edit", SCENARIOS, index=2)
     hourly_rate = st.number_input("EA Hourly Rate ($/hr)", min_value=0.0, value=60.0, step=5.0)
 
+    st.markdown("### Downloads")
+    excel_bytes = export_to_excel(st.session_state.scenarios, st.session_state.execs_supported, st.session_state.quarterly, period)
+    st.download_button("📊 Download Excel", data=excel_bytes, file_name=f"EA_Performance_{period}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    pdf_bytes = export_to_pdf(st.session_state.scenarios, st.session_state.execs_supported, period, st.session_state.heatmap_img)
+    st.download_button("📄 Download PDF", data=pdf_bytes, file_name=f"EA_Performance_{period}.pdf", mime="application/pdf")
+
 # ---------------------- Header + KPI Cards ----------------------
 st.markdown(f"## {TITLE}")
 
 totals = scenario_totals(st.session_state.scenarios, st.session_state.execs_supported)
-exp_total = totals["Executive Expectations"]
-tgt_total = totals["Targeted Performance"]
-act_total = totals["Actual Performance"]
+exp_total, tgt_total, act_total = totals["Executive Expectations"], totals["Targeted Performance"], totals["Actual Performance"]
 align_val = alignment_pct(act_total, exp_total)
 
-# (Optional) You can replace these with your computed projections if desired
 sat_proj = 85.0
 sav_redund, sav_speed = 1000.0, 2000.0
 
-# KPI Row 1
 cols = st.columns(5)
 with cols[0]:
     st.markdown(f"<div class='card'><h3>Expectation Total</h3><p>{exp_total:.2f}</p></div>", unsafe_allow_html=True)
@@ -199,7 +217,6 @@ with cols[3]:
 with cols[4]:
     st.markdown(f"<div class='card'><h3>Satisfaction</h3><p>{sat_proj:.1f}%</p></div>", unsafe_allow_html=True)
 
-# KPI Row 2
 cols2 = st.columns(3)
 with cols2[0]:
     st.markdown(f"<div class='card'><h3>Executives Supported</h3><p>{st.session_state.execs_supported['Actual Performance']}</p></div>", unsafe_allow_html=True)
@@ -212,9 +229,6 @@ st.divider()
 
 # ---------------------- Performance Volume ----------------------
 st.markdown("### Performance Volume")
-st.caption("Edit levels and volume percentages for the selected scenario (see toggle above on the right).")
-st.caption("Operational Support = % of work outside direct executive actions (projects, onboarding, events, etc.).")
-
 perf_df = st.session_state.scenarios[selected_scenario].copy()
 edited = st.data_editor(
     perf_df, use_container_width=True, disabled=["Category"],
@@ -226,6 +240,18 @@ edited = st.data_editor(
     key=f"perf_editor_{selected_scenario}",
 )
 st.session_state.scenarios[selected_scenario] = edited
+
+st.divider()
+
+# ---------------------- Support Alignment ----------------------
+st.markdown("### Support Alignment")
+cols = st.columns(3)
+for i, scen in enumerate(SCENARIOS):
+    with cols[i]:
+        st.session_state.execs_supported[scen] = st.number_input(
+            f"{scen} – Executives Supported", min_value=1, step=1,
+            value=int(st.session_state.execs_supported.get(scen, 1))
+        )
 
 st.divider()
 
@@ -277,7 +303,7 @@ if current_q != "+ Add new quarter":
     with st.expander("Work Pattern", expanded=False):
         edit_block("Work Pattern", ["Reactive Work Hours", "Overtime Hours"])
 
-    # Quarter KPIs in cards
+    # Quarter KPIs
     q_enriched = quarterly_enriched(st.session_state.quarterly)
     if current_q in q_enriched["Quarter"].values:
         row = q_enriched[q_enriched["Quarter"]==current_q].iloc[0]
@@ -285,22 +311,13 @@ if current_q != "+ Add new quarter":
         with qa: st.markdown(f"<div class='card'><h3>Email Efficiency</h3><p>{row['Email Efficiency']:.2f}</p></div>", unsafe_allow_html=True)
         with qb: st.markdown(f"<div class='card'><h3>Invite Action Rate</h3><p>{row['Invite Action Rate']:.2f}</p></div>", unsafe_allow_html=True)
         with qc: st.markdown(f"<div class='card'><h3>Travel Impact</h3><p>{row['Travel Impact Score']:.1f}</p></div>", unsafe_allow_html=True)
-        with qd: st.markdown(f"<div class='card'><h3>Deleg/AUTO/DIRECT</h3><p>{row['% Delegated']:.0f}% / {row['% Automated']:.0f}% / {row['% Direct']:.0f}%</p></div>", unsafe_allow_html=True)
+        with qd: st.markdown(f"<div class='card'><h3>Deleg/AUTO/DIRECT</h3><p>{row['% Delegated']:.0f}%/{row['% Automated']:.0f}%/{row['% Direct']:.0f}%</p></div>", unsafe_allow_html=True)
 
-    # Quarterly summary (Q1–Q4 + YTD)
+    # Quarterly summary
     years_present = sorted(set(q["Quarter"].astype(str).str.slice(0,4)))
     sel_year = st.selectbox("Summary year", years_present, index=len(years_present)-1 if years_present else 0)
     if sel_year:
         qs = quarterly_summary(st.session_state.quarterly, sel_year)
-        st.markdown(f"**{sel_year} Quarterly Summary (Q1–Q4 + YTD)**")
-        st.dataframe(qs, use_container_width=True)
+        st.markdown(f"**{sel_year
 
-st.divider()
-
-# ---------------------- Risk Indicators ----------------------
-st.markdown("### Risk Indicators")
-st.dataframe(
-    risk_table_all(st.session_state.scenarios, st.session_state.execs_supported),
-    use_container_width=True
-)
 
