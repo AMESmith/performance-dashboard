@@ -25,7 +25,7 @@ st.markdown("""
     }
     /* KPI Cards */
     .card {
-        background-color: #FFFFFF;
+        background-color: #000000;
         border: 2px solid #ffb000;
         border-radius: 10px;
         padding: 15px;
@@ -34,7 +34,7 @@ st.markdown("""
         box-shadow: 2px 2px 8px rgba(0,0,0,0.1);
     }
     .card h3 {
-        color: #000000;
+        color: #ffffff;
         font-size: 18px;     /* bigger, clearer titles */
         font-weight: 600;    /* bold titles */
         margin-bottom: 10px; /* spacing above number */
