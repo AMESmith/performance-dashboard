@@ -179,5 +179,98 @@ colA, colB, colC, colD = st.columns(4)
 with colA:
     st.metric("Expectation", "100%")
 with colB:
-    st.metric("Target",
+    st.metric("Target", f"{round(target_pct)}%")
+with colC:
+    st.metric("Actual", f"{round(actual_pct)}%")
+with colD:
+    st.metric("Alignment", f"{round(align_pct)}%")
 
+col1, col2 = st.columns(2)
+with col1:
+    donut_chart("Actual vs Expectation", actual_pct, 100)
+with col2:
+    donut_chart("Target vs Expectation", target_pct, 100)
+
+st.subheader("Category Breakdown")
+bar_chart(all_df, "AdjustedScore", "Adjusted Score by Category & Scenario")
+
+st.subheader("Detailed Table")
+st.dataframe(all_df[
+    ["Scenario","Category","Level","Volume","Priority","LevelScore","WeightedScore","PriorityWeight","AdjustedScore"]
+])
+
+# ---------- Export Buttons ----------
+excel_file = export_to_excel(all_df, None, period)
+st.download_button(
+    label="📊 Download Excel Report",
+    data=excel_file,
+    file_name=f"EA_Performance_{period}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+pdf_file = export_to_pdf(all_df, totals, align_pct, period)
+st.download_button(
+    label="📄 Download PDF Report",
+    data=pdf_file,
+    file_name=f"EA_Performance_{period}.pdf",
+    mime="application/pdf"
+)
+
+# ---------- Simulation ----------
+if simulate:
+    st.divider()
+    st.subheader("Monte Carlo Simulation (Uncertainty Analysis)")
+
+    base_actual = act_df.copy()
+    def level_to_idx(level: str) -> int:
+        return ["Low", "Mid", "High"].index(level)
+    def idx_to_level(idx: int) -> str:
+        idx = int(np.clip(idx, 0, 2))
+        return ["Low", "Mid", "High"][idx]
+
+    exp_total_arr = np.full(int(iterations), exp_total, dtype=float)
+    act_total_arr = np.zeros(int(iterations), dtype=float)
+    align_arr = np.zeros(int(iterations), dtype=float)
+
+    for i in range(int(iterations)):
+        sim_rows = []
+        for _, row in base_actual.iterrows():
+            vol_noise = np.random.normal(loc=0.0, scale=vol_variation/100.0)
+            sim_vol = max(0, int(round(row["Volume"] * (1 + vol_noise))))
+            lvl_idx = level_to_idx(row["Level"])
+            if np.random.rand() < (level_flip_prob/100.0):
+                lvl_idx += np.random.choice([-1, 1])
+            sim_level = idx_to_level(lvl_idx)
+            sim_rows.append({
+                "Scenario": "Actual Performance (Sim)",
+                "Category": row["Category"],
+                "Level": sim_level,
+                "Volume": sim_vol,
+                "Priority": row["Priority"],
+            })
+        sim_df = pd.DataFrame(sim_rows)
+        sim_df = compute_scores(sim_df)
+        act_total_arr[i] = sim_df["AdjustedScore"].sum()
+        align_arr[i] = (act_total_arr[i] / exp_total_arr[i] * 100) if exp_total_arr[i] > 0 else 0.0
+
+    histogram(act_total_arr, "Distribution of Actual Totals (Raw Scores)")
+    histogram(align_arr, "Distribution of Alignment % (Actual vs Expectation)")
+
+    sim_stats = pd.DataFrame({
+        "Metric": ["Actual Total", "Alignment %"],
+        "Mean": [np.mean(act_total_arr), np.mean(align_arr)],
+        "Std Dev": [np.std(act_total_arr), np.std(align_arr)],
+        "P10": [np.percentile(act_total_arr, 10), np.percentile(align_arr, 10)],
+        "P50": [np.percentile(act_total_arr, 50), np.percentile(align_arr, 50)],
+        "P90": [np.percentile(act_total_arr, 90), np.percentile(align_arr, 90)],
+    })
+    st.dataframe(sim_stats)
+
+    # Export simulation-inclusive Excel
+    excel_file = export_to_excel(all_df, sim_stats, period)
+    st.download_button(
+        label="📊 Download Excel Report (with Simulation)",
+        data=excel_file,
+        file_name=f"EA_Performance_{period}_sim.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
